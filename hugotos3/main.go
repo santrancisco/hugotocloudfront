@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -318,15 +319,19 @@ func uploadFileToS3(sess *session.Session, bucketname string, bucketPrefix strin
 	defer file.Close()
 	var key string
 	abspath, _ := filepath.Abs(filePath)
-	fmt.Println(abspath)
-	fmt.Println(hugofolder + "/public")
 	key = bucketPrefix + strings.SplitAfterN(abspath, hugofolder+"/public", 2)[1]
-
+	contenttype, err := GetFileContentType(file, filePath)
+	if err != nil {
+		return
+	}
+	fmt.Println(filePath)
+	fmt.Println(contenttype)
 	// Upload the file to the s3 given bucket
 	params := &s3.PutObjectInput{
-		Bucket: aws.String(bucketname), // Required
-		Key:    aws.String(key),        // Required
-		Body:   file,
+		Bucket:      aws.String(bucketname), // Required
+		Key:         aws.String(key),        // Required
+		Body:        file,
+		ContentType: &contenttype,
 	}
 	_, err = s3Svc.PutObject(params)
 	if err != nil {
@@ -334,6 +339,38 @@ func uploadFileToS3(sess *session.Session, bucketname string, bucketPrefix strin
 			bucketname, key, err.Error())
 		return
 	}
+}
+
+func GetFileContentType(out *os.File, path string) (string, error) {
+	// We use a built in table of the common types since the system
+	// TypeByExtension might be unreliable. But if we don't know, we delegate
+	// to the system.
+	ext := filepath.Ext(path)
+	switch ext {
+	case ".htm", ".html":
+		return "text/html", nil
+	case ".css":
+		return "text/css", nil
+	case ".js":
+		return "application/javascript", nil
+	default:
+		return mime.TypeByExtension(ext), nil
+	}
+	// The code below tries to return contentType using DetectContentType but seems to be unreliable
+	// // Only the first 512 bytes are used to sniff the content type.
+	// buffer := make([]byte, 512)
+
+	// _, err := out.Read(buffer)
+	// if err != nil {
+	// 	return "", err
+	// }
+
+	// // Use the net/http package's handy DectectContentType function. Always returns a valid
+	// // content-type by returning "application/octet-stream" if no others seemed to match.
+	// contentType := strings.Split(http.DetectContentType(buffer), ";")[0]
+
+	// return contentType, nil
+
 }
 
 func updatesite() error {
