@@ -2,7 +2,10 @@ package main
 
 import (
 	"archive/zip"
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -38,9 +41,13 @@ var (
 	region       = "us-east-1"
 	sitehost     = "www.ebfe.pw"
 	archivepath  = "/tmp/site.zip"
+	slackURL     = ""
 )
 
 func init() {
+	if os.Getenv("SLACK_WEBHOOK") != "" {
+		slackURL = os.Getenv("SLACK_WEBHOOK")
+	}
 	if os.Getenv("BUCKETNAME") != "" {
 		bucketname = os.Getenv("BUCKETNAME")
 	}
@@ -77,11 +84,13 @@ func action() {
 	err = buildsite()
 	if err != nil {
 		os.Stderr.WriteString(err.Error())
+		_ = SendToSlack("We had issue with building the site with Hugo")
 		return
 	}
 	log.Println("Uploading site to S3 bucket")
 	err = updatesite()
 	if err != nil {
+		_ = SendToSlack("We had issue with uploading to S3")
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			default:
@@ -93,8 +102,10 @@ func action() {
 			os.Stderr.WriteString(err.Error())
 		}
 		os.Stderr.WriteString(err.Error())
+		// We dont really care if Slack failed to send message, it's nice feature but not so important.
 		return
 	}
+	_ = SendToSlack("Site successfully published")
 }
 
 func lambdaHandler(event events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
@@ -110,6 +121,42 @@ func main() {
 	// uncomment below to test run locally without webhook
 	// action()
 	lambda.Start(lambdaHandler)
+}
+
+// The Slack payload we prepare to be marshaled into JSON later and send to Slack server
+type SlackPayload struct {
+	Text      string `json:"text"` // To create a link in your text, enclose the URL in <> angle brackets
+	Username  string `json:"username,omitempty"`
+	IconURL   string `json:"icon_url,omitempty"`
+	IconEmoji string `json:"icon_emoji,omitempty"`
+	Channel   string `json:"channel,omitempty"`
+}
+
+var (
+	ErrInvalidStatusCode    = errors.New("invalid status code")
+	ErrSlackWebhookNotFound = errors.New("slack webhook not found in env variables")
+)
+
+func SendToSlack(text string) error {
+	if slackURL == "" {
+		return nil
+	}
+	payload := SlackPayload{
+		Text:      text,
+		IconEmoji: ":book:",
+		Username:  "Mr.Publisher",
+	}
+	log.Printf("Sending to Slack: %s\n", payload.Text)
+	payloadJSON, _ := json.Marshal(payload)
+	resp, err := http.Post(slackURL, "application/json", bytes.NewBuffer(payloadJSON))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return ErrInvalidStatusCode
+	}
+	log.Printf("Slack notified")
+	return nil
 }
 
 func parsegithubwebhook(r *http.Request) error {
