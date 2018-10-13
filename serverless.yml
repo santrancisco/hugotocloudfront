@@ -11,7 +11,7 @@
 #
 # Happy Coding!
 
-service: hugotos3
+service: jeremyandjames
 
 # You can pin your service to only deploy with a specific Serverless version
 # Check out our docs for more details
@@ -24,7 +24,6 @@ provider:
 # you can overwrite defaults here
 #  stage: dev
 #  region: us-east-1
-
 # you can add statements to the Lambda function's IAM Role here
   iamRoleStatements:
     - Effect: "Allow"
@@ -46,6 +45,88 @@ provider:
             - ${env:BUCKETNAME}
             - "/*"
 
+# you can add CloudFormation resource templates here
+resources:
+  Resources:
+    WebAppstaticBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${env:BUCKETNAME}
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    # Specifying the policies to make sure all files inside the Bucket are avaialble to CloudFront
+    WebAppStaticBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: WebAppstaticBucket
+        PolicyDocument:
+          Id: AllowPublicAccess
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+              - s3:GetObject
+              Resource: arn:aws:s3:::${env:BUCKETNAME}/*
+    CloudFrontCDN:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Aliases:
+            - jeremyandjames.com
+          Enabled: "true"
+          DefaultRootObject: "index.html"
+# The default caching applies to the default (root) objects, not to images etc...
+          DefaultCacheBehavior:
+            AllowedMethods:
+            - GET
+            - HEAD
+            MinTTL: "0"
+            MaxTTL: "86400"
+            DefaultTTL: "60"
+            TargetOriginId: myS3Origin
+            ForwardedValues:
+              QueryString: 'false'
+            ViewerProtocolPolicy: redirect-to-https
+# Here is example that we can define a second behaviour of how we cache responses for /api and target an api gateway(run lambda for example)
+          # CacheBehaviors:
+          # - AllowedMethods:
+          #   - GET
+          #   - HEAD
+          #   - POST
+          #   TargetOriginId: myS3Origin #For API example below, we an target myAPIOrigin
+          #   ForwardedValues:
+          #     QueryString: "false"
+          #   ViewerProtocolPolicy: https-only
+          #   MinTTL: "0"
+          #   MaxTTL: "0"
+          #   DefaultTTL: "0"
+          #   PathPattern: api/*
+          Origins:
+# Here is the origin from S3...
+            - DomainName: ${env:BUCKETNAME}.s3.amazonaws.com
+              # OriginPath: /
+              ## An identifier for the origin which must be unique within the distribution
+              Id: myS3Origin
+              CustomOriginConfig:
+                HTTPPort: 80
+                HTTPSPort: 443
+                OriginProtocolPolicy: https-only
+              # If we use this, it would have been better as we can hide our bucket but getting it to work is a pain
+              # S3OriginConfig:
+              #   # OriginAccessIdentity: ""
+              #   OriginAccessIdentity: origin-access-identity/cloudfront/${env:CLOUDFRONT_ORIGINID}
+# here is an example of apigateway origin (eg using lambda backend)
+            # - DomainName:
+            #    Fn::Join:
+            #     - ""
+            #     - - Ref: ApiGatewayRestApi
+            #       - ".execute-api.${env:region}.amazonaws.com"
+            #   Id: myAPIOrigin
+            #   OriginPath: /api
+            #   CustomOriginConfig:
+            #     OriginProtocolPolicy: https-only
 # you can define service wide environment variables here
 #  environment:
 #    variable1: value1
@@ -114,14 +195,3 @@ functions:
 #    environment:
 #      variable2: value2
 
-# you can add CloudFormation resource templates here
-#resources:
-#  Resources:
-#    NewResource:
-#      Type: AWS::S3::Bucket
-#      Properties:
-#        BucketName: my-new-bucket
-#  Outputs:
-#     NewOutput:
-#       Description: "Description for the output"
-#       Value: "Some output value"
